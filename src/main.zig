@@ -23,41 +23,41 @@ const Transaction = struct {
 };
 
 const Resource = struct {
-    item_id: []const u8,
-    valor_lock: bool,
-    transacao_holder: ?u32,
-    fila: ArrayList(u32),
+    id: []const u8,
+    lock_: bool,
+    transaction_holder: ?u32,
+    queue: ArrayList(u32),
     mutex: Mutex,
     
     const Self = @This();
     
     pub fn init(allocator: std.mem.Allocator, id: []const u8) Self {
         return Self{
-            .item_id = id,
-            .valor_lock = false,
-            .transacao_holder = null,
-            .fila = ArrayList(u32).init(allocator),
+            .id = id,
+            .lock_ = false,
+            .transaction_holder = null,
+            .queue = ArrayList(u32).init(allocator),
             .mutex = Mutex{},
         };
     }
     
     pub fn deinit(self: *Self) void {
-        self.fila.deinit();
+        self.queue.deinit();
     }
     
     pub fn lock(self: *Self, transaction_id: u32) bool {
         self.mutex.lock();
         defer self.mutex.unlock();
         
-        if (!self.valor_lock) {
-            self.valor_lock = true;
-            self.transacao_holder = transaction_id;
+        if (!self.lock_) {
+            self.lock_ = true;
+            self.transaction_holder = transaction_id;
 
-            print("Thread T({}) obteve o bloqueio do recurso {s}\n", .{ transaction_id, self.item_id });
+            print("Thread T({}) obteve o bloqueio do recurso {s}\n", .{ transaction_id, self.id });
             return true;
         } else {
-            self.fila.append(transaction_id) catch {};
-            print("Thread T({}) está esperando pelo recurso {s} (detido por T({}))\n", .{ transaction_id, self.item_id, self.transacao_holder.? });
+            self.queue.append(transaction_id) catch {};
+            print("Thread T({}) está esperando pelo recurso {s} (detido por T({}))\n", .{ transaction_id, self.id, self.transaction_holder.? });
             return false;
         }
     }
@@ -66,14 +66,14 @@ const Resource = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         
-        if (self.transacao_holder == transaction_id) {
-            self.valor_lock = false;
-            self.transacao_holder = null;
-            print("Thread T({}) liberou o recurso {s}\n", .{ transaction_id, self.item_id });
+        if (self.transaction_holder == transaction_id) {
+            self.lock_ = false;
+            self.transaction_holder = null;
+            print("Thread T({}) liberou o recurso {s}\n", .{ transaction_id, self.id });
             
-            for (self.fila.items, 0..) |tid, i| {
+            for (self.queue.items, 0..) |tid, i| {
                 if (tid == transaction_id) {
-                    _ = self.fila.swapRemove(i);
+                    _ = self.queue.swapRemove(i);
                     break;
                 }
             }
@@ -83,13 +83,13 @@ const Resource = struct {
     pub fn isLockedBy(self: *Self, transaction_id: u32) bool {
         self.mutex.lock();
         defer self.mutex.unlock();
-        return self.transacao_holder == transaction_id;
+        return self.transaction_holder == transaction_id;
     }
     
     pub fn isInQueue(self: *Self, transaction_id: u32) bool {
         self.mutex.lock();
         defer self.mutex.unlock();
-        for (self.fila.items) |tid| {
+        for (self.queue.items) |tid| {
             if (tid == transaction_id) return true;
         }
         return false;
@@ -116,21 +116,21 @@ const DeadlockDetector = struct {
         defer self.mutex.unlock();
         
         for (self.resources) |resource1| {
-            if (resource1.valor_lock and resource1.fila.items.len > 0) {
-                const holder1_id = resource1.transacao_holder.?;
+            if (resource1.lock_ and resource1.queue.items.len > 0) {
+                const holder1_id = resource1.transaction_holder.?;
                 
                 for (self.resources) |resource2| {
-                    if (std.mem.eql(u8, resource1.item_id, resource2.item_id)) continue;
+                    if (std.mem.eql(u8, resource1.id, resource2.id)) continue;
                     
-                    if (resource2.isInQueue(holder1_id) and resource2.valor_lock) {
-                        const holder2_id = resource2.transacao_holder.?;
+                    if (resource2.isInQueue(holder1_id) and resource2.lock_) {
+                        const holder2_id = resource2.transaction_holder.?;
                         if (holder2_id == holder1_id) return null;
                         
                         if (resource1.isInQueue(holder2_id)) {
 
                             print("DEADLOCK DETECTADO entre T({}) e T({})\n", .{ holder1_id, holder2_id });
-                            print("  T({}) possui {s} e espera por {s}\n", .{ holder1_id, resource1.item_id, resource2.item_id });
-                            print("  T({}) possui {s} e espera por {s}\n", .{ holder2_id, resource2.item_id, resource1.item_id });
+                            print("  T({}) possui {s} e espera por {s}\n", .{ holder1_id, resource1.id, resource2.id });
+                            print("  T({}) possui {s} e espera por {s}\n", .{ holder2_id, resource2.id, resource1.id });
                             
                             const holder1_ts = self.getTransactionTimestamp(holder1_id);
                             const holder2_ts = self.getTransactionTimestamp(holder2_id);
